@@ -33,8 +33,7 @@ export default function Home() {
     formData.append("file", file);
 
     try {
-      // ตรวจสอบในโค้ด React ของคุณ (เช่น page.tsx)
-const res = await axios.post("http://127.0.0.1:8001/predict", formData);
+      const res = await axios.post("http://127.0.0.1:8001/predict", formData);
       setResult(res.data);
     } catch (err) {
       console.error("Error:", err);
@@ -192,7 +191,7 @@ const res = await axios.post("http://127.0.0.1:8001/predict", formData);
                  <StatCard 
                    onClick={() => openModal('total')}
                    title="Total Customers" 
-                   value={result.total_customers.toLocaleString()} 
+                   value={result?.total_customers?.toLocaleString() ?? "0"}
                    icon={<FiUsers className="text-blue-600" />}
                    colorClass="bg-blue-50 text-blue-600"
                    desc="Click to view all customers"

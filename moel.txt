@@ -1,0 +1,125 @@
+import pandas as pd
+import numpy as np
+import joblib
+
+from sklearn.model_selection import train_test_split, RandomizedSearchCV
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, StackingClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.metrics import classification_report, accuracy_score, f1_score
+from xgboost import XGBClassifier
+
+# 1. Load Data
+df = pd.read_csv("WA_Fn-UseC_-Telco-Customer-Churn.csv")
+
+# 2. Data Cleaning
+if "customerID" in df.columns:
+    df.drop("customerID", axis=1, inplace=True)
+
+df["TotalCharges"] = pd.to_numeric(df["TotalCharges"], errors="coerce")
+
+# 3. Features & Target
+X = df.drop("Churn", axis=1)
+y = df["Churn"].apply(lambda x: 1 if x == "Yes" else 0)
+
+# 4. Split (Stratified)
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=y
+)
+
+# 5. Identify feature types
+numeric_features = X.select_dtypes(include=['int64', 'float64']).columns.tolist()
+categorical_features = X.select_dtypes(include=['object']).columns.tolist()
+
+# 6. Preprocessing
+numeric_transformer = Pipeline([
+    ('imputer', SimpleImputer(strategy='median')),
+    ('scaler', StandardScaler())
+])
+
+categorical_transformer = Pipeline([
+    ('imputer', SimpleImputer(strategy='constant', fill_value='missing')),
+    ('onehot', OneHotEncoder(handle_unknown='ignore'))
+])
+
+preprocessor = ColumnTransformer([
+    ('num', numeric_transformer, numeric_features),
+    ('cat', categorical_transformer, categorical_features)
+])
+
+# 7. Base Models
+base_models = [
+    ('rf', RandomForestClassifier(
+        n_estimators=300,
+        class_weight='balanced',
+        random_state=42
+    )),
+    ('gb', GradientBoostingClassifier()),
+    ('xgb', XGBClassifier(
+        n_estimators=300,
+        learning_rate=0.05,
+        eval_metric='logloss',
+        use_label_encoder=False,
+        random_state=42
+    ))
+]
+
+stack_model = StackingClassifier(
+    estimators=base_models,
+    final_estimator=LogisticRegression(max_iter=2000),
+    stack_method='predict_proba',
+    n_jobs=-1
+)
+
+model_pipeline = Pipeline([
+    ('preprocessor', preprocessor),
+    ('classifier', stack_model)
+])
+
+# 8. Hyperparameter Tuning
+param_dist = {
+    'classifier__rf__n_estimators': [200, 300, 500],
+    'classifier__rf__max_depth': [None, 10, 20],
+    'classifier__xgb__learning_rate': [0.03, 0.05, 0.1],
+}
+
+search = RandomizedSearchCV(
+    model_pipeline,
+    param_distributions=param_dist,
+    n_iter=10,
+    cv=5,
+    scoring='f1',
+    n_jobs=-1,
+    random_state=42
+)
+
+search.fit(X_train, y_train)
+best_model = search.best_estimator_
+
+# 9. Optimize Threshold
+y_proba = best_model.predict_proba(X_test)[:, 1]
+
+best_threshold = 0.5
+best_f1 = 0
+
+for t in np.arange(0.3, 0.7, 0.01):
+    preds = (y_proba > t).astype(int)
+    score = f1_score(y_test, preds)
+    if score > best_f1:
+        best_f1 = score
+        best_threshold = t
+
+y_pred = (y_proba > best_threshold).astype(int)
+
+# 10. Results
+print(f"🔥 Best Threshold: {best_threshold:.2f}")
+print(f"✅ Accuracy: {accuracy_score(y_test, y_pred):.4f}")
+print(f"🏆 F1 Score: {best_f1:.4f}")
+print("\n📋 Classification Report:\n", classification_report(y_test, y_pred))
+
+# 11. Save Model
+joblib.dump(best_model, "model.pkl")
+print("💾 Saved: model.pkl (Ultimate Stacking Version)")

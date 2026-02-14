@@ -1,0 +1,9 @@
+step 1 
+--backend--
+cd churn-project/backend
+.\venv\Scripts\activate
+python -m uvicorn main:app --reload --port 8001
+
+step2
+--frontend--
+npm run dev

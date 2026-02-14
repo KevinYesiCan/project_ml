@@ -2,13 +2,15 @@ import pandas as pd
 import numpy as np
 import joblib
 import os
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, StratifiedKFold, GridSearchCV
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.metrics import classification_report, accuracy_score, f1_score, roc_auc_score
 from xgboost import XGBClassifier
+from imblearn.over_sampling import SMOTE
+from imblearn.pipeline import Pipeline as ImbPipeline
 
 # =========================
 # 1️⃣ LOAD DATA
@@ -18,38 +20,38 @@ file_path = os.path.join(BASE_DIR, "WA_Fn-UseC_-Telco-Customer-Churn.csv")
 
 df = pd.read_csv(file_path)
 df.replace(r'^\s*$', np.nan, regex=True, inplace=True)
-
-df["TotalCharges"] = pd.to_numeric(df["TotalCharges"], errors="coerce")
-df["TotalCharges"] = df["TotalCharges"].fillna(0)
+df["TotalCharges"] = pd.to_numeric(df["TotalCharges"], errors="coerce").fillna(0)
 
 # =========================
-# 2️⃣ FEATURE ENGINEERING
+# 2️⃣ FEATURE ENGINEERING (สูตรเพิ่มความแม่น)
 # =========================
+# A. รวมบริการที่ลูกค้าใช้ (ยิ่งใช้เยอะ ยิ่งเลิกยาก)
+services = ['OnlineSecurity', 'OnlineBackup', 'DeviceProtection', 'TechSupport', 'StreamingTV', 'StreamingMovies']
+df['TotalServices'] = (df[services] == 'Yes').sum(axis=1)
+
+# B. สร้างกลุ่มตามอายุการใช้งาน
+df['TenureGroup'] = pd.cut(df['tenure'], bins=[-1, 12, 24, 48, 100], labels=['Short', 'Medium', 'Long', 'VeryLong'])
+
+# C. ฟีเจอร์ทางการเงิน
 df["AvgChargesPerMonth"] = df["TotalCharges"] / (df["tenure"] + 1)
-df["IsLongTerm"] = (df["tenure"] > 24).astype(int)
+df["IsAutomaticPayment"] = df["PaymentMethod"].str.contains("automatic", case=False).astype(int)
 
 X = df.drop(columns=["customerID", "Churn"])
 y = df["Churn"].map({"Yes": 1, "No": 0})
 
-# =========================
-# 3️⃣ SPLIT
-# =========================
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, stratify=y, random_state=42
-)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
 
 # =========================
-# 4️⃣ PREPROCESS
+# 3️⃣ PREPROCESS (Standardize Data)
 # =========================
 numeric_features = X.select_dtypes(include=['int64', 'float64']).columns.tolist()
-categorical_features = X.select_dtypes(include=['object']).columns.tolist()
+categorical_features = X.select_dtypes(include=['object', 'category']).columns.tolist()
 
 preprocessor = ColumnTransformer([
     ('num', Pipeline([
         ('imputer', SimpleImputer(strategy='median')),
-        ('scaler', StandardScaler())
+        ('scaler', StandardScaler())  # เพิ่มการปรับสเกล
     ]), numeric_features),
-
     ('cat', Pipeline([
         ('imputer', SimpleImputer(strategy='constant', fill_value='missing')),
         ('onehot', OneHotEncoder(handle_unknown='ignore'))
@@ -57,66 +59,50 @@ preprocessor = ColumnTransformer([
 ])
 
 # =========================
-# 5️⃣ MODEL (Balanced + Strong)
+# 4️⃣ MODEL + SMOTE + GRID SEARCH
 # =========================
-scale_pos_weight = (len(y_train[y_train == 0]) / len(y_train[y_train == 1])) * 0.8
-
-model = XGBClassifier(
-    n_estimators=300,
-    max_depth=5,
-    learning_rate=0.05,
-    subsample=0.9,
-    colsample_bytree=0.9,
-    eval_metric='logloss',
-    scale_pos_weight=scale_pos_weight,
-    tree_method="hist",
-    random_state=42
-)
-
-pipeline = Pipeline([
+# ใช้ ImbPipeline เพื่อให้ SMOTE ทำงานเฉพาะตอน Train เท่านั้น
+pipeline = ImbPipeline([
     ('preprocessor', preprocessor),
-    ('classifier', model)
+    ('smote', SMOTE(random_state=42)), 
+    ('classifier', XGBClassifier(eval_metric='logloss', tree_method="hist", random_state=42))
 ])
 
-pipeline.fit(X_train, y_train)
+param_grid = {
+    "classifier__n_estimators": [300, 500],
+    "classifier__max_depth": [3, 4, 5],
+    "classifier__learning_rate": [0.02, 0.05],
+    "classifier__subsample": [0.8],
+    "classifier__colsample_bytree": [0.8]
+}
+
+grid = GridSearchCV(pipeline, param_grid, cv=StratifiedKFold(3), scoring="f1", n_jobs=-1, verbose=1)
+grid.fit(X_train, y_train)
+
+best_model = grid.best_estimator_
 
 # =========================
-# 6️⃣ EVALUATE
+# 5️⃣ FIND BEST THRESHOLD (จุดตัดสินใจที่ดีที่สุด)
 # =========================
-y_proba = pipeline.predict_proba(X_test)[:, 1]
-
-# 🔥 หา threshold ที่ดีที่สุดจาก F1
-best_threshold = 0.5
-best_f1 = 0
-
-for t in np.arange(0.4, 0.7, 0.01):
-    preds = (y_proba > t).astype(int)
-    score = f1_score(y_test, preds)
-    if score > best_f1:
-        best_f1 = score
-        best_threshold = t
-
-y_pred = (y_proba > best_threshold).astype(int)
-
-accuracy = accuracy_score(y_test, y_pred)
-roc_auc = roc_auc_score(y_test, y_proba)
-
-print("\n📊 FINAL MODEL PERFORMANCE")
-print("================================")
-print(f"🎯 Accuracy  : {accuracy*100:.2f}%")
-print(f"🏆 F1 Score  : {best_f1:.4f}")
-print(f"📈 ROC-AUC   : {roc_auc:.4f}")
-print(f"🔥 Best Threshold : {best_threshold:.2f}")
-print("\n📋 Classification Report:\n")
-print(classification_report(y_test, y_pred))
+y_proba = best_model.predict_proba(X_test)[:, 1]
+thresholds = np.arange(0.1, 0.9, 0.01)
+f1_scores = [f1_score(y_test, (y_proba > t).astype(int)) for t in thresholds]
+best_t = thresholds[np.argmax(f1_scores)]
 
 # =========================
-# 7️⃣ SAVE MODEL
+# 6️⃣ EVALUATE & SAVE
 # =========================
+y_pred = (y_proba > best_t).astype(int)
+
+print(f"\n🎯 Best Threshold: {best_t:.2f}")
+print(f"✅ Accuracy: {accuracy_score(y_test, y_pred)*100:.2f}%")
+print(f"🏆 F1 Score: {f1_score(y_test, y_pred):.4f}")
+print(f"📈 ROC-AUC: {roc_auc_score(y_test, y_proba):.4f}")
+
 joblib.dump({
-    "model": pipeline,
-    "threshold": best_threshold,
+    "model": best_model,
+    "threshold": best_t,
     "features": X.columns.tolist()
 }, os.path.join(BASE_DIR, "model_final.pkl"))
 
-print("\n💾 Saved successfully: model_final.pkl")
+print("\n💾 Saved: model_final.pkl")

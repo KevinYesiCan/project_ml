@@ -83,7 +83,7 @@ export default function Home() {
 
   // --- DATA PROCESSING FOR CHARTS ---
   const extraStats = useMemo(() => {
-    if (!result?.details) return { payment: [], internet: [], tenureChart: [] };
+    if (!result?.details) return { payment: [], internet: [], tenureChart: [], contract: [] };
 
     const calculateRisk = (key: string) => {
       const groups: any = {};
@@ -101,6 +101,8 @@ export default function Home() {
 
     const paymentStats = calculateRisk('PaymentMethod');
     const internetStats = calculateRisk('InternetService');
+    // เพิ่มการคำนวณ Contract ที่นี่ เพื่อแก้ปัญหา NaN
+    const contractStats = calculateRisk('Contract');
 
     const tenureBins: any = {};
     for(let i=1; i<=72; i+=6) {
@@ -130,7 +132,7 @@ export default function Home() {
             Safe: b.total > 0 ? (((b.total - b.churn) / b.total) * 100).toFixed(1) : 0
         }));
 
-    return { payment: paymentStats, internet: internetStats, tenureChart };
+    return { payment: paymentStats, internet: internetStats, tenureChart, contract: contractStats };
   }, [result]);
 
   const handleExportCSV = (dataToExport: any[]) => {
@@ -496,7 +498,13 @@ export default function Home() {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                <BreakdownTable title="Contract Type" icon={<FiBarChart2 />} data={result.risk_by_contract} keyName="type" onExport={() => handleExportCSV(result.risk_by_contract)} />
+                <BreakdownTable 
+                  title="Contract Type" 
+                  icon={<FiBarChart2 />} 
+                  data={extraStats.contract} 
+                  keyName="name" 
+                  onExport={() => handleExportCSV(extraStats.contract)} 
+                />
                 <BreakdownTable title="Payment Method" icon={<FiCreditCard />} data={extraStats.payment} keyName="name" onExport={() => handleExportCSV(extraStats.payment)} />
                 <BreakdownTable title="Internet Service" icon={<FiWifi />} data={extraStats.internet} keyName="name" onExport={() => handleExportCSV(extraStats.internet)} />
               </div>
@@ -568,8 +576,12 @@ export default function Home() {
                            </div>
                          </td>
                          <td className="px-6 py-4 text-center pr-8">
-                            <span className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-bold shadow-sm border ${customer.churn_prediction === 1 ? 'bg-rose-50 text-rose-600 border-rose-100' : 'bg-emerald-50 text-emerald-600 border-emerald-100'}`}>
-                              {customer.churn_prediction === 1 ? <FiAlertTriangle /> : <FiCheckCircle />}
+                            <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide border ${
+                              customer.churn_prediction === 1
+                                ? 'bg-rose-50 text-rose-600 border-rose-200'
+                                : 'bg-emerald-50 text-emerald-600 border-emerald-200'
+                            }`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${customer.churn_prediction === 1 ? 'bg-rose-500' : 'bg-emerald-500'}`}></span>
                               {customer.churn_prediction === 1 ? 'High Risk' : 'Retained'}
                             </span>
                          </td>

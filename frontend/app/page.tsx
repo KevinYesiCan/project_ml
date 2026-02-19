@@ -2,8 +2,13 @@
 import { useState, useMemo, useEffect } from "react";
 import axios from "axios";
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, AreaChart, Area
+  LineChart, Line, XAxis, YAxis, CartesianGrid,
+  Tooltip as RechartsTooltip,
+  ResponsiveContainer,
+  AreaChart, Area,
+  PieChart, Pie, Cell
 } from "recharts";
+
 import {
   FiHome, FiUsers, FiPieChart, FiUploadCloud,
   FiCheckCircle, FiAlertTriangle, FiArrowRight,
@@ -23,6 +28,7 @@ export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [contractFilter, setContractFilter] = useState("All");
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -63,11 +69,13 @@ export default function Home() {
     formData.append("file", file);
 
     try {
+      // Ensure your backend is running on this port
       const res = await axios.post("http://127.0.0.1:8001/predict", formData);
       setResult(res.data);
     } catch (err) {
       console.error("Error:", err);
-      // alert("เชื่อมต่อ Server ไม่ได้");
+      // Fallback mock data for demonstration if server fails
+      // alert("Server connection failed. Check console.");
     } finally {
       setLoading(false);
     }
@@ -148,6 +156,48 @@ export default function Home() {
     }
   };
 
+  // --- BUSINESS LOGIC VARIABLES ---
+  const LOSS_PER_CUSTOMER = 2000;
+  const RETENTION_COST = 200;
+  
+  const estimatedLoss = result?.churn_count * LOSS_PER_CUSTOMER || 0;
+  const retentionBudget = result?.churn_count * RETENTION_COST || 0;
+  const netRisk = estimatedLoss - retentionBudget;
+  const safeCount = result ? result.total_customers - result.churn_count : 0;
+
+  const pieData = result
+    ? [
+        { name: "Safe", value: safeCount },
+        { name: "High Risk", value: result.churn_count },
+      ]
+    : [];
+
+  const uniqueContracts = result
+    ? ["All", ...new Set(result.details.map((d: any) => d.Contract))]
+    : [];
+
+  const contractRisk = result?.details?.reduce(
+    (acc: any, curr: any) => {
+      if (!acc[curr.Contract])
+        acc[curr.Contract] = { total: 0, churn: 0 };
+
+      acc[curr.Contract].total += 1;
+      if (curr.churn_prediction === 1)
+        acc[curr.Contract].churn += 1;
+
+      return acc;
+    },
+    {}
+  );
+
+  const riskSummary = contractRisk &&
+    Object.entries(contractRisk)
+      .map(([key, val]: any) => ({
+        contract: key,
+        rate: (val.churn / val.total) * 100,
+      }))
+      .sort((a, b) => b.rate - a.rate)[0];
+
   const openModal = (type: 'total' | 'risk' | 'safe') => {
     if (!result) return;
     setModalType(type);
@@ -223,7 +273,7 @@ export default function Home() {
             </div>
           </header>
 
-          {/* --- CASE 1: PRE-IMPORT STATE (ADDED FEATURES TO FILL SPACE) --- */}
+          {/* --- CASE 1: PRE-IMPORT STATE --- */}
           {!result ? (
             <div className="space-y-8 animate-fade-in-up">
               
@@ -270,7 +320,7 @@ export default function Home() {
                 </div>
               </section>
 
-              {/* 2. FILLER CONTENT: SYSTEM CAPABILITIES (GRID 3) */}
+              {/* 2. SYSTEM CAPABILITIES */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                  <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm hover:shadow-md transition-all hover:-translate-y-1 group">
                     <div className="w-14 h-14 bg-blue-50 rounded-2xl flex items-center justify-center text-blue-600 mb-6 group-hover:bg-blue-600 group-hover:text-white transition-colors">
@@ -297,7 +347,7 @@ export default function Home() {
                  </div>
               </div>
 
-              {/* 3. FILLER CONTENT: FOOTER INFO */}
+              {/* 3. FOOTER INFO */}
               <div className="flex flex-col md:flex-row items-center justify-between p-6 bg-slate-100 rounded-3xl text-sm text-slate-500">
                  <div className="flex items-center gap-2">
                     <FiZap className="text-amber-500" />
@@ -311,7 +361,7 @@ export default function Home() {
             </div>
           ) : (
             
-            /* --- CASE 2: RESULT DASHBOARD (EXISTING CODE) --- */
+            /* --- CASE 2: RESULT DASHBOARD --- */
             <div className="space-y-8 animate-fade-in-up">
               
               {/* 1. STATS GRID */}
@@ -321,31 +371,79 @@ export default function Home() {
                  <StatCard onClick={() => openModal('risk')} title="High Risk Customers" value={result.churn_count.toLocaleString()} icon={<FiAlertTriangle className="text-rose-600" />} colorClass="bg-rose-50 text-rose-600" desc="Click to view risk" isDanger clickable />
               </div>
 
-              {/* 2. HORIZONTAL BAR (RISK DISTRIBUTION) */}
-              <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 flex flex-col justify-center relative overflow-hidden">
-                <div className="flex justify-between items-end mb-6">
-                  <div>
-                    <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2"><FiAlignLeft /> Risk Distribution</h3>
-                    <p className="text-sm text-slate-400">Total vs Churn Prediction</p>
+              {/* BUSINESS IMPACT */}
+              <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200">
+                <h3 className="text-lg font-bold mb-6">Business Impact</h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="p-4 bg-rose-50 rounded-xl">
+                    <p className="text-sm text-slate-500">Estimated Revenue Loss</p>
+                    <p className="text-2xl font-bold text-rose-600">฿{estimatedLoss.toLocaleString()}</p>
                   </div>
-                  <div className="text-right">
-                    <span className="block text-3xl font-black text-rose-500 tracking-tight">{result.churn_rate}%</span>
-                    <span className="text-xs font-bold text-slate-400 uppercase">Churn Rate</span>
+                  <div className="p-4 bg-amber-50 rounded-xl">
+                    <p className="text-sm text-slate-500">Retention Budget</p>
+                    <p className="text-2xl font-bold text-amber-600">฿{retentionBudget.toLocaleString()}</p>
+                  </div>
+                  <div className="p-4 bg-emerald-50 rounded-xl">
+                    <p className="text-sm text-slate-500">Net Risk Exposure</p>
+                    <p className="text-2xl font-bold text-emerald-600">฿{netRisk.toLocaleString()}</p>
                   </div>
                 </div>
-                <div className="w-full">
-                  <div className="h-8 w-full bg-slate-100 rounded-full flex overflow-hidden relative shadow-inner">
-                    <div style={{ width: `${100 - result.churn_rate}%` }} className="h-full bg-emerald-500 relative group transition-all duration-1000 ease-out flex items-center justify-center hover:bg-emerald-400 cursor-help">
-                       <div className="opacity-0 group-hover:opacity-100 absolute -top-10 bg-slate-800 text-white text-xs py-1 px-2 rounded transition-opacity whitespace-nowrap pointer-events-none">Safe: {(result.total_customers - result.churn_count).toLocaleString()}</div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* PIE CHART */}
+                <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200">
+                  <h3 className="text-lg font-bold mb-6">Risk Distribution (Pie)</h3>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <PieChart>
+                      <Pie
+                        data={pieData}
+                        dataKey="value"
+                        outerRadius={100}
+                        label
+                      >
+                        <Cell fill="#10B981" />
+                        <Cell fill="#F43F5E" />
+                      </Pie>
+                      <RechartsTooltip />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  {riskSummary && (
+                  <div className="bg-indigo-50 p-6 rounded-2xl border border-indigo-100 mt-4">
+                    <h3 className="font-bold text-indigo-700 mb-2">AI Insight</h3>
+                    <p className="text-slate-700">
+                      Customers with <strong>{riskSummary.contract}</strong> contract show the highest churn rate at <strong>{riskSummary.rate.toFixed(1)}%</strong>. Consider targeted retention campaign.
+                    </p>
+                  </div>
+                )}
+                </div>
+
+                {/* 2. HORIZONTAL BAR (RISK DISTRIBUTION) */}
+                <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 flex flex-col justify-center relative overflow-hidden">
+                  <div className="flex justify-between items-end mb-6">
+                    <div>
+                      <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2"><FiAlignLeft /> Risk Distribution</h3>
+                      <p className="text-sm text-slate-400">Total vs Churn Prediction</p>
                     </div>
-                    <div style={{ width: `${result.churn_rate}%` }} className="h-full bg-rose-500 relative group transition-all duration-1000 ease-out flex items-center justify-center hover:bg-rose-400 cursor-help">
-                      <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'linear-gradient(45deg, #fff 25%, transparent 25%, transparent 50%, #fff 50%, #fff 75%, transparent 75%, transparent)', backgroundSize: '10px 10px' }}></div>
-                      <div className="opacity-0 group-hover:opacity-100 absolute -top-10 right-0 bg-slate-800 text-white text-xs py-1 px-2 rounded transition-opacity whitespace-nowrap pointer-events-none">Risk: {result.churn_count.toLocaleString()}</div>
+                    <div className="text-right">
+                      <span className="block text-3xl font-black text-rose-500 tracking-tight">{result.churn_rate}%</span>
+                      <span className="text-xs font-bold text-slate-400 uppercase">Churn Rate</span>
                     </div>
                   </div>
-                  <div className="flex justify-between items-center mt-4 text-sm font-medium">
-                    <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-emerald-500"></div><span className="text-slate-600">Retained <span className="text-emerald-600 font-bold ml-1">{((100 - result.churn_rate).toFixed(1))}%</span></span></div>
-                    <div className="flex items-center gap-2"><span className="text-slate-600 text-right">High Risk <span className="text-rose-600 font-bold ml-1">{Number(result.churn_rate).toFixed(1)}%</span></span><div className="w-3 h-3 rounded-full bg-rose-500"></div></div>
+                  <div className="w-full">
+                    <div className="h-8 w-full bg-slate-100 rounded-full flex overflow-hidden relative shadow-inner">
+                      <div style={{ width: `${100 - result.churn_rate}%` }} className="h-full bg-emerald-500 relative group transition-all duration-1000 ease-out flex items-center justify-center hover:bg-emerald-400 cursor-help">
+                         <div className="opacity-0 group-hover:opacity-100 absolute -top-10 bg-slate-800 text-white text-xs py-1 px-2 rounded transition-opacity whitespace-nowrap pointer-events-none">Safe: {(result.total_customers - result.churn_count).toLocaleString()}</div>
+                      </div>
+                      <div style={{ width: `${result.churn_rate}%` }} className="h-full bg-rose-500 relative group transition-all duration-1000 ease-out flex items-center justify-center hover:bg-rose-400 cursor-help">
+                        <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'linear-gradient(45deg, #fff 25%, transparent 25%, transparent 50%, #fff 50%, #fff 75%, transparent 75%, transparent)', backgroundSize: '10px 10px' }}></div>
+                        <div className="opacity-0 group-hover:opacity-100 absolute -top-10 right-0 bg-slate-800 text-white text-xs py-1 px-2 rounded transition-opacity whitespace-nowrap pointer-events-none">Risk: {result.churn_count.toLocaleString()}</div>
+                      </div>
+                    </div>
+                    <div className="flex justify-between items-center mt-4 text-sm font-medium">
+                      <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-emerald-500"></div><span className="text-slate-600">Retained <span className="text-emerald-600 font-bold ml-1">{((100 - result.churn_rate).toFixed(1))}%</span></span></div>
+                      <div className="flex items-center gap-2"><span className="text-slate-600 text-right">High Risk <span className="text-rose-600 font-bold ml-1">{Number(result.churn_rate).toFixed(1)}%</span></span><div className="w-3 h-3 rounded-full bg-rose-500"></div></div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -382,14 +480,29 @@ export default function Home() {
               </div>
 
               {/* 4. BREAKDOWN TABLES */}
+              <div className="flex justify-between items-center">
+                <h3 className="text-xl font-bold text-slate-800">Detailed Breakdowns</h3>
+                <select
+                  value={contractFilter}
+                  onChange={(e) => setContractFilter(e.target.value)}
+                  className="border border-slate-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  {uniqueContracts.map((c: any) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 <BreakdownTable title="Contract Type" icon={<FiBarChart2 />} data={result.risk_by_contract} keyName="type" onExport={() => handleExportCSV(result.risk_by_contract)} />
                 <BreakdownTable title="Payment Method" icon={<FiCreditCard />} data={extraStats.payment} keyName="name" onExport={() => handleExportCSV(extraStats.payment)} />
                 <BreakdownTable title="Internet Service" icon={<FiWifi />} data={extraStats.internet} keyName="name" onExport={() => handleExportCSV(extraStats.internet)} />
               </div>
 
-              {/* Reset Button (Optional: to go back to upload screen) */}
-              <div className="flex justify-center pt-6">
+              {/* Reset Button */}
+              <div className="flex justify-center pt-6 pb-12">
                 <button onClick={() => { setResult(null); setFile(null); }} className="text-sm text-slate-400 hover:text-indigo-600 underline">
                    Upload a different file
                 </button>
@@ -465,14 +578,11 @@ export default function Home() {
                    </tbody>
                  </table>
                ) : (
-                 <div className="flex flex-col items-center justify-center h-64 text-slate-400">
-                    <FiFilter className="text-4xl mb-2 opacity-50" />
-                    <p>No customer data available in detail.</p>
-                 </div>
+                  <div className="flex flex-col items-center justify-center h-64 text-slate-400">
+                    <FiFilter className="text-4xl mb-2" />
+                    <p>No customers found for this category.</p>
+                  </div>
                )}
-            </div>
-            <div className="px-8 py-4 border-t border-slate-100 bg-slate-50 rounded-b-2xl text-right">
-              <span className="text-sm text-slate-500">Showing {getModalData().length} records</span>
             </div>
           </div>
         </div>
@@ -481,66 +591,51 @@ export default function Home() {
   );
 }
 
-// ─── REUSABLE COMPONENTS ─────────────────────────────
-function BreakdownTable({ title, icon, data, keyName, onExport }: any) {
-  return (
-    <div className="bg-white rounded-3xl shadow-sm border border-slate-200 flex flex-col h-full">
-      <div className="px-6 py-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 rounded-t-3xl">
-        <div>
-          <h3 className="font-bold text-slate-900 text-md flex items-center gap-2">{icon} {title}</h3>
-        </div>
-        <button onClick={onExport} className="text-slate-400 hover:text-indigo-600 transition-colors"><FiDownload /></button>
-      </div>
-      <div className="overflow-x-auto flex-1">
-        <table className="w-full text-left">
-          <tbody className="divide-y divide-slate-50">
-            {data && data.map((item: any, index: number) => {
-              const rate = item.churn_rate || item.rate;
-              return (
-              <tr key={index} className="hover:bg-indigo-50/30 transition-colors group">
-                <td className="px-6 py-4 font-bold text-slate-700 text-sm">{item[keyName]}</td>
-                <td className="px-6 py-4 text-right">
-                  <div className="flex flex-col items-end gap-1">
-                    <span className={`text-sm font-bold ${rate > 40 ? 'text-rose-600' : rate > 20 ? 'text-amber-600' : 'text-emerald-600'}`}>{rate}%</span>
-                    <div className="w-20 bg-slate-100 rounded-full h-1.5 overflow-hidden">
-                      <div className={`h-full rounded-full ${rate > 40 ? 'bg-rose-500' : rate > 20 ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${rate}%` }} />
-                    </div>
-                  </div>
-                </td>
-              </tr>
-            )})}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
+// --- SUB-COMPONENTS (Added to ensure code works) ---
 
-function NavItem({ icon, label, active }: any) {
-  return (
-    <a href="#" className={`flex items-center gap-4 px-4 py-3.5 rounded-xl text-sm font-bold transition-all
-      ${active ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/30" : "text-slate-500 hover:bg-slate-50 hover:text-indigo-600"}`}>
-      <span className="text-xl">{icon}</span>{label}
-    </a>
-  );
-}
+const NavItem = ({ icon, label, active }: { icon: any, label: string, active?: boolean }) => (
+  <div className={`flex items-center gap-4 px-4 py-3 rounded-xl transition-all cursor-pointer ${active ? 'bg-indigo-50 text-indigo-700 font-bold' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'}`}>
+    <span className="text-xl">{icon}</span>
+    <span className="text-sm">{label}</span>
+  </div>
+);
 
-function StatCard({ title, value, icon, desc, isDanger, trend, colorClass, onClick, clickable }: any) {
-  return (
-    <div onClick={clickable ? onClick : undefined} className={`bg-white p-6 rounded-3xl shadow-sm border border-slate-200 flex flex-col justify-between h-full transition-all duration-200 relative overflow-hidden group ${clickable ? 'cursor-pointer hover:shadow-lg hover:-translate-y-1 hover:border-indigo-200' : ''}`}>
-      <div className="flex justify-between items-start mb-4 relative z-10">
-        <div className={`p-3 rounded-2xl ${colorClass}`}>{icon}</div>
-        {trend && <span className="text-xs font-bold text-emerald-600 bg-emerald-50 border border-emerald-100 px-2 py-1 rounded-lg flex items-center gap-1"><FiActivity /> Safe</span>}
-      </div>
-      <div className="relative z-10">
-        <h3 className="text-4xl font-extrabold text-slate-900 tracking-tight">{value}</h3>
-        <p className={`text-sm font-bold mt-1 ${isDanger ? 'text-rose-600' : 'text-slate-500'}`}>{title}</p>
-        <div className="flex justify-between items-end mt-4">
-           <p className="text-xs text-slate-400 font-medium">{desc}</p>
-           {clickable && <FiArrowRight className="text-slate-300 group-hover:text-indigo-500 transition-colors" />}
-        </div>
-      </div>
-      <div className={`absolute -right-6 -bottom-6 w-24 h-24 rounded-full opacity-10 blur-2xl transition-transform group-hover:scale-150 ${colorClass.split(" ")[0]}`}></div>
+const StatCard = ({ title, value, icon, colorClass, desc, trend, isDanger, clickable, onClick }: any) => (
+  <div onClick={onClick} className={`bg-white p-6 rounded-3xl border border-slate-100 shadow-sm transition-all hover:shadow-md ${clickable ? 'cursor-pointer hover:-translate-y-1 active:scale-95' : ''}`}>
+    <div className="flex items-start justify-between mb-4">
+      <div className={`p-3 rounded-2xl ${colorClass}`}>{icon}</div>
+      {trend && <span className="px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 text-xs font-bold flex items-center gap-1">+{trend} <FiActivity /></span>}
     </div>
-  );
-}
+    <div className="space-y-1">
+      <h3 className="text-slate-500 text-sm font-medium">{title}</h3>
+      <p className={`text-2xl font-black tracking-tight ${isDanger ? 'text-rose-600' : 'text-slate-800'}`}>{value}</p>
+    </div>
+    {desc && <p className="text-xs text-slate-400 mt-4 pt-4 border-t border-slate-50 flex items-center gap-2"><FiFilter /> {desc}</p>}
+  </div>
+);
+
+const BreakdownTable = ({ title, icon, data, keyName, onExport }: any) => (
+  <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col h-full">
+    <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center gap-3">
+        <div className="p-2 bg-slate-100 text-slate-600 rounded-lg">{icon}</div>
+        <h3 className="font-bold text-slate-900">{title}</h3>
+      </div>
+      <button onClick={onExport} className="text-slate-400 hover:text-indigo-600 transition-colors"><FiDownload /></button>
+    </div>
+    <div className="space-y-3 flex-1 overflow-auto max-h-64 pr-2">
+      {data && data.length > 0 ? data.map((item: any, i: number) => (
+        <div key={i} className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-100 hover:border-indigo-100 transition-colors">
+          <div className="flex flex-col">
+            <span className="font-bold text-sm text-slate-700">{item[keyName] || item.contract || item.name}</span>
+            <span className="text-xs text-slate-400">{item.total} Customers</span>
+          </div>
+          <div className="text-right">
+             <span className={`block font-bold ${Number(item.rate) > 30 ? 'text-rose-600' : Number(item.rate) > 15 ? 'text-amber-500' : 'text-emerald-600'}`}>{Number(item.rate).toFixed(1)}%</span>
+             <span className="text-[10px] text-slate-400 uppercase">Churn</span>
+          </div>
+        </div>
+      )) : <p className="text-center text-slate-400 text-sm py-4">No data available</p>}
+    </div>
+  </div>
+);
